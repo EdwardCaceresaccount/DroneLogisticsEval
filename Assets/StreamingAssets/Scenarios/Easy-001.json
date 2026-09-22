@@ -1,0 +1,44 @@
+{
+  "scenario_id": "Easy-001",
+  "scenario_version": "1.0.0",
+  "seed": 42,
+  "tick_seconds": 0.05,
+  "grid_size": 20,
+  "tiles": [
+    { "x": 4,  "y": 4,  "type": "Facility" },
+    { "x": 16, "y": 15, "type": "Facility" },
+    { "x": 10, "y": 9,  "type": "ChargingStation" },
+    { "x": 6,  "y": 16, "type": "ChargingStation" },
+    { "x": 9,  "y": 7,  "type": "House" },
+    { "x": 14, "y": 12, "type": "House" },
+    { "x": 19, "y": 19, "type": "House" },
+    { "x": 11, "y": 13, "type": "House" },
+    { "x": 5,  "y": 10, "type": "House" },
+    { "x": 1,  "y": 1,  "type": "House" },
+    { "x": 12, "y": 8,  "type": "Building" },
+    { "x": 12, "y": 9,  "type": "Building" },
+    { "x": 12, "y": 10, "type": "Building" },
+    { "x": 12, "y": 11, "type": "Building" }
+  ],
+  "drone": {
+    "start_facility": { "x": 4, "y": 4 },
+    "starting_battery_pct": 100.0
+  },
+  "packages": [
+    { "id": "P001", "origin": { "x": 4,  "y": 4  }, "destination": { "x": 9,  "y": 7  }, "difficulty": "Easy" },
+    { "id": "P002", "origin": { "x": 4,  "y": 4  }, "destination": { "x": 14, "y": 12 }, "difficulty": "Normal" },
+    { "id": "P003", "origin": { "x": 4,  "y": 4  }, "destination": { "x": 19, "y": 19 }, "difficulty": "Hard" },
+    { "id": "P004", "origin": { "x": 16, "y": 15 }, "destination": { "x": 11, "y": 13 }, "difficulty": "Easy" },
+    { "id": "P005", "origin": { "x": 16, "y": 15 }, "destination": { "x": 5,  "y": 10 }, "difficulty": "Normal" },
+    { "id": "P006", "origin": { "x": 16, "y": 15 }, "destination": { "x": 1,  "y": 1  }, "difficulty": "Hard" }
+  ],
+  "mission": {
+    "require_all_packages_delivered": true,
+    "max_trips": 12,
+    "max_sim_seconds": 600.0
+  },
+  "recovery": {
+    "auto_recovery_enabled": true,
+    "lbs_safety_margin_pct": 5.0
+  }
+}
