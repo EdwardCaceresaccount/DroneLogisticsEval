@@ -4,17 +4,11 @@ using SimCore.State;
 
 namespace SimCore.Engine
 {
-    /// <summary>
-    /// Single source of truth for "can the drone get there". Used by LBS detection now and by the
-    /// PROCESSED observation in Block 9 — so the planner's information and the simulator's judgement
-    /// can never disagree about what "reachable" means. Straight-line only (no pathfinding).
-    /// </summary>
     public static class Reachability
     {
         public static double BatteryRequiredPct(SimulationEngine e, WorldPos from, WorldPos to, SpeedMode speed)
             => from.DistanceTo(to) / e.MoveSpeedTilesPerSec(speed) * e.DischargePctPerSec(speed);
 
-        /// <summary>Direct path clear of Buildings AND enough battery (with margin).</summary>
         public static bool CanReachDirect(SimulationEngine e, WorldPos from, GridCoord target, SpeedMode speed,
                                           double batteryPct, double marginPct, out double requiredPct)
         {
@@ -23,7 +17,6 @@ namespace SimCore.Engine
             return requiredPct + marginPct <= batteryPct;
         }
 
-        /// <summary>Facilities then Charging Stations, each in deterministic scan order.</summary>
         public static List<GridCoord> ChargeTiles(WorldState w)
         {
             var list = new List<GridCoord>(w.Map.AllOfType(TileType.Facility));
@@ -39,6 +32,19 @@ namespace SimCore.Engine
             foreach (var c in ChargeTiles(e.World))
             {
                 if (!GridGeometry.DirectPathClear(e.World.Map, from, c.Center)) continue;
+                double req = BatteryRequiredPct(e, from, c.Center, speed);
+                if (req < best) { best = req; tile = c; }
+            }
+            return best;
+        }
+
+        /// <summary>Cheapest charge tile by straight-line distance, ignoring Buildings. Used as the estimate of last resort.</summary>
+        public static double RequiredToNearestChargeTileIgnoringObstacles(SimulationEngine e, WorldPos from, SpeedMode speed, out GridCoord? tile)
+        {
+            tile = null;
+            double best = double.PositiveInfinity;
+            foreach (var c in ChargeTiles(e.World))
+            {
                 double req = BatteryRequiredPct(e, from, c.Center, speed);
                 if (req < best) { best = req; tile = c; }
             }

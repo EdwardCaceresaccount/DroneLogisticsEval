@@ -11,24 +11,27 @@ namespace SimCore.Engine
         public const string RecoveryStarted          = "RECOVERY_STARTED";
     }
 
-    /// <summary>Everything the simulator knew at the moment it judged the battery — logged verbatim.</summary>
     public sealed class LowBatteryAssessment
     {
         public bool IsLowBattery;
         public double BatteryPct;
-        public double MarginPct;                       // configured safety margin (1x)
-        public double TriggerMarginPct => MarginPct * 2; // D14: trigger reserve (2x)
-        public GridCoord? SegmentTarget;               // null when hovering
-        public double SegmentRequiredPct;              // at the drone's current speed
-        public double AfterSegmentRequiredPct;         // segment end → nearest clear charge tile, at Slow (+inf if walled off)
-        public GridCoord? RecoveryTile;                // nearest charge tile reachable from CURRENT position, at Slow, with 1x margin
+        public double MarginPct;
+        public double TriggerMarginPct => MarginPct * 2;
+        public GridCoord? SegmentTarget;
+        public double SegmentRequiredPct;
+        public double AfterSegmentRequiredPct;
+        /// <summary>True when the after-segment estimate had to ignore Buildings (all chargers walled off from the segment end).</summary>
+        public bool AfterSegmentIgnoredObstacles;
+        public GridCoord? RecoveryTile;
         public double RecoveryRequiredPct;
         public double TotalRequiredPct => SegmentRequiredPct + AfterSegmentRequiredPct + TriggerMarginPct;
     }
 
     /// <summary>
-    /// D14. Pure function of engine state — no side effects, no events. The EpisodeRunner decides what to do
-    /// with the assessment (D15), which keeps "detect" and "act" separately testable.
+    /// D14. LBS = finishing the current segment at current speed would leave too little battery to reach any
+    /// charge tile afterward at Slow, plus 2× margin. The after-segment estimate prefers a clear straight line and
+    /// falls back to the unobstructed nearest when none exists — the monitor judges battery, not geometry.
+    /// The rescue target (RecoveryTile) always requires a flyable straight line.
     /// </summary>
     public static class LowBatteryMonitor
     {
@@ -47,7 +50,13 @@ namespace SimCore.Engine
             }
 
             a.AfterSegmentRequiredPct = Reachability.RequiredToNearestChargeTile(e, segmentEnd, SpeedMode.Slow, out _);
-            a.IsLowBattery = a.TotalRequiredPct > d.BatteryPct;   // +inf > anything: a walled-off segment end is LBS regardless of charge
+            if (double.IsInfinity(a.AfterSegmentRequiredPct))
+            {
+                a.AfterSegmentRequiredPct = Reachability.RequiredToNearestChargeTileIgnoringObstacles(e, segmentEnd, SpeedMode.Slow, out _);
+                a.AfterSegmentIgnoredObstacles = true;
+            }
+
+            a.IsLowBattery = a.TotalRequiredPct > d.BatteryPct;
 
             if (a.IsLowBattery &&
                 Reachability.TryNearestReachableChargeTile(e, d.Position, SpeedMode.Slow, d.BatteryPct, a.MarginPct, out var tile, out var req))
