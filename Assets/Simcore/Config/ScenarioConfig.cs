@@ -69,8 +69,7 @@ namespace SimCore.Config
             new SpeedTriple { Slow = 0.6, Normal = 1.0, Fast = 1.5 };
 
         [JsonProperty("discharge_multipliers")]     public SpeedTriple DischargeMultipliers =
-            new SpeedTriple { Slow = 0.7, Normal = 1.0, Fast = 1.6 };
-
+            new SpeedTriple { Slow = 0.5, Normal = 1.0, Fast = 1.9 };
         [JsonProperty("load_seconds_per_package")]  public double LoadSecondsPerPackage = 2.0;
         [JsonProperty("inventory_capacity")]        public int InventoryCapacity = 2;
     }
