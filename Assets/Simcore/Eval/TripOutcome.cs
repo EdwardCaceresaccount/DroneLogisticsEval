@@ -5,23 +5,21 @@ using SimCore.State;
 
 namespace SimCore.Eval
 {
-    /// <summary>Spec §16(b) rows. Two rows are Block 7 (need Low Battery State detection).</summary>
     public enum TripClassification
     {
-        StrongSuccess,                 // delivered ≥1, safe landing at base, no emergency
-        DeliveryWithEmergencyCharge,   // Block 7
-        NoDeliverySafeReturn,          // landed at a different base, nothing delivered
-        SameLocationNoDelivery,        // landed where it started, nothing delivered
-        ForcedLbsRecovery,             // Block 7
-        ForcedLanding,                 // battery hit 0 airborne
-        Crash,                         // building collision
-        EndedAirborne,                 // plan finished with the drone still flying
-        EndedOffBase,                  // plan finished landed on a House/Road
-        InvalidPlannerBehavior,        // no valid plan produced, or plan diverged from reality at dispatch
+        StrongSuccess,
+        DeliveryWithEmergencyCharge,
+        NoDeliverySafeReturn,
+        SameLocationNoDelivery,
+        ForcedLbsRecovery,
+        ForcedLanding,
+        Crash,
+        EndedAirborne,
+        EndedOffBase,
+        InvalidPlannerBehavior,
         TimeLimitExceeded
     }
 
-    /// <summary>Spec §16(c): 0 success … 4 critical. Never a replacement for the classification — always kept alongside it.</summary>
     public static class Severity
     {
         public static int Of(TripClassification c) => c switch
@@ -41,7 +39,6 @@ namespace SimCore.Eval
         };
     }
 
-    /// <summary>D13: the sub-decisions encoded in a plan, extracted for logging and later strategy analysis.</summary>
     public sealed class PlanDecisionSummary
     {
         public List<string> PackagesLoaded { get; } = new();
@@ -77,18 +74,17 @@ namespace SimCore.Eval
 
         public Dictionary<string, object> ToLogData() => new()
         {
-            ["packages_loaded"]      = string.Join(",", PackagesLoaded),
-            ["packages_to_deliver"]  = string.Join(",", PackagesToDeliver),
-            ["speed_modes"]          = string.Join(",", SpeedModes),
-            ["charge_targets"]       = string.Join(",", ChargeTargets),
-            ["waypoint_count"]       = WaypointCount,
-            ["planned_end_tile"]     = PlannedEndTile?.ToString() ?? "",
+            ["packages_loaded"]       = string.Join(",", PackagesLoaded),
+            ["packages_to_deliver"]   = string.Join(",", PackagesToDeliver),
+            ["speed_modes"]           = string.Join(",", SpeedModes),
+            ["charge_targets"]        = string.Join(",", ChargeTargets),
+            ["waypoint_count"]        = WaypointCount,
+            ["planned_end_tile"]      = PlannedEndTile?.ToString() ?? "",
             ["planned_end_tile_type"] = PlannedEndTileType ?? "",
-            ["ends_with_land"]       = EndsWithLand
+            ["ends_with_land"]        = EndsWithLand
         };
     }
 
-    /// <summary>Everything measured about one trip (spec §18.1). Mutable while the trip runs; frozen at TRIP_ENDED.</summary>
     public sealed class TripOutcome
     {
         public int TripNumber;
@@ -119,8 +115,15 @@ namespace SimCore.Eval
         public bool InvalidPlanner;
         public bool TimeLimitExceeded;
 
-        public bool LowBatteryOccurred;   // Block 7
-        public bool EmergencyRecovery;    // Block 7
+        // Block 7
+        public bool LowBatteryOccurred;
+        public bool EmergencyRecovery;
+        public double LbsTriggerTimeSeconds;
+        public double LbsBatteryPct;
+        public string LbsSegmentTarget;
+        public GridCoord? RecoveryTargetTile;
+        public int CommandsRemainingAtAbort;
+        public int RecoveryCommandsDispatched;
 
         public PlanDecisionSummary Decisions;
         public TripClassification Classification;
@@ -162,7 +165,13 @@ namespace SimCore.Eval
                 ["invalid_planner"] = InvalidPlanner,
                 ["time_limit_exceeded"] = TimeLimitExceeded,
                 ["low_battery_occurred"] = LowBatteryOccurred,
-                ["emergency_recovery"] = EmergencyRecovery
+                ["emergency_recovery"] = EmergencyRecovery,
+                ["lbs_trigger_time"] = LbsTriggerTimeSeconds,
+                ["lbs_battery_pct"] = LbsBatteryPct,
+                ["lbs_segment_target"] = LbsSegmentTarget ?? "",
+                ["recovery_target_tile"] = RecoveryTargetTile?.ToString() ?? "",
+                ["commands_remaining_at_abort"] = CommandsRemainingAtAbort,
+                ["recovery_commands_dispatched"] = RecoveryCommandsDispatched
             };
             if (Decisions != null)
                 foreach (var kv in Decisions.ToLogData()) d["decision_" + kv.Key] = kv.Value;

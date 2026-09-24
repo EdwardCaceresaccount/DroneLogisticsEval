@@ -7,21 +7,12 @@ using SimCore.State;
 
 namespace SimCore.Engine
 {
-    /// <summary>
-    /// The ONLY thing that mutates WorldState. Two responsibilities:
-    ///   1. Primitives (LiftOff, BeginMoveTo, ...) — start physical processes. Preconditions
-    ///      are engine invariants; the Block 5 validator is what stops planners from violating them.
-    ///   2. Tick() — advance the world exactly one fixed timestep. Deterministic: same
-    ///      primitives in the same order on the same config yield bit-identical state.
-    /// No wall-clock, no Unity, no randomness (nothing here is random by design).
-    /// </summary>
     public sealed class SimulationEngine
     {
         public WorldState World { get; }
         public ScenarioConfig Config { get; }
         public DroneActivity Activity { get; } = new();
 
-        /// <summary>Background charge process (D10). Independent of Activity.</summary>
         public bool IsCharging { get; private set; }
         public double ChargeTargetPct { get; private set; }
 
@@ -38,10 +29,7 @@ namespace SimCore.Engine
         public bool IsBusy => Activity.Kind != ActivityKind.Idle;
         public bool IsTerminal => World.Drone.Failure != FailureKind.None;
 
-        // =====================================================================
-        //  Derived physics — used by the engine now, by LBS (Block 7) and the
-        //  PROCESSED observation (Block 9) later. One source of truth for range math.
-        // =====================================================================
+        // ---------------- derived physics ----------------
 
         public double MoveSpeedTilesPerSec(SpeedMode mode)
             => Config.Drone.BaseSpeedTilesPerSec * Config.Drone.SpeedMultipliers.For(mode);
@@ -49,13 +37,10 @@ namespace SimCore.Engine
         public double DischargePctPerSec(SpeedMode mode)
             => Config.Drone.BaseDischargePctPerSec * Config.Drone.DischargeMultipliers.For(mode);
 
-        /// <summary>Straight-line tiles reachable on 'batteryPct' at 'mode' (no reserve applied).</summary>
         public double RangeTilesAtSpeed(SpeedMode mode, double batteryPct)
             => batteryPct / DischargePctPerSec(mode) * MoveSpeedTilesPerSec(mode);
 
-        // =====================================================================
-        //  Primitives
-        // =====================================================================
+        // ---------------- primitives ----------------
 
         public void LiftOff()
         {
@@ -126,7 +111,6 @@ namespace SimCore.Engine
             Emit(SimEventTypes.LoadStarted, ("package_id", packageId), ("seconds", Config.Drone.LoadSecondsPerPackage));
         }
 
-        /// <summary>Starts background charging (D10). Returns immediately; completes over ticks.</summary>
         public void BeginCharge(double targetPct)
         {
             var d = World.Drone;
@@ -155,7 +139,6 @@ namespace SimCore.Engine
             Emit(SimEventTypes.WaitStarted, ("seconds", seconds), ("flight", World.Drone.Flight.ToString()));
         }
 
-        /// <summary>Instantaneous. Drone must be exactly over the package's destination House (flying or landed).</summary>
         public void Deliver(string packageId)
         {
             var d = World.Drone;
@@ -173,11 +156,27 @@ namespace SimCore.Engine
                  ("battery_pct", d.BatteryPct), ("delivered_total", World.DeliveredCount()));
         }
 
-        // =====================================================================
-        //  Time
-        // =====================================================================
+        /// <summary>
+        /// Block 7: simulator-initiated interruption of an in-flight activity (Moving or Waiting).
+        /// The drone holds its current position (hovering, still draining). Only the recovery system calls this;
+        /// it is never exposed to planners as a tool.
+        /// </summary>
+        public void AbortActivity(string reason)
+        {
+            RequireNotTerminal();
+            var d = World.Drone;
+            Require(d.Flight == FlightStatus.Flying, "AbortActivity: only flight activities can be aborted.");
+            Require(Activity.Kind == ActivityKind.Moving || Activity.Kind == ActivityKind.Waiting || Activity.Kind == ActivityKind.Idle,
+                $"AbortActivity: cannot abort {Activity.Kind}.");
 
-        /// <summary>Advance exactly one fixed timestep. Events emitted during the tick carry the tick's start time.</summary>
+            var kind = Activity.Kind;
+            Activity.SetIdle();
+            Emit(SimEventTypes.ActivityAborted, ("activity", kind.ToString()), ("reason", reason),
+                 ("position", d.Position.ToString()), ("battery_pct", d.BatteryPct));
+        }
+
+        // ---------------- time ----------------
+
         public void Tick()
         {
             RequireNotTerminal();
@@ -189,7 +188,7 @@ namespace SimCore.Engine
                 case ActivityKind.Loading: TickLoad(dt); break;
                 case ActivityKind.Waiting: TickWait(dt); break;
                 case ActivityKind.Idle:
-                    if (World.Drone.Flight == FlightStatus.Flying) DrainBattery(dt, 1.0); // hovering costs battery
+                    if (World.Drone.Flight == FlightStatus.Flying) DrainBattery(dt, 1.0);
                     break;
             }
 
@@ -211,7 +210,7 @@ namespace SimCore.Engine
             bool arrives = remaining <= step;
             if (arrives)
             {
-                to = target;                                    // snap: no float drift at waypoints
+                to = target;
                 fractionOfTick = step > 0 ? remaining / step : 0;
             }
             else
@@ -229,7 +228,7 @@ namespace SimCore.Engine
 
             d.Position = to;
             DrainBattery(dt, fractionOfTick);
-            if (IsTerminal) return; // forced landing consumed this tick
+            if (IsTerminal) return;
 
             if (arrives)
             {
@@ -266,8 +265,6 @@ namespace SimCore.Engine
         {
             if (!IsCharging) return;
             var d = World.Drone;
-            // Charging only progresses while physically on a charge tile (invariant: BeginCharge required it,
-            // and LiftOff is blocked while charging, so this always holds — checked anyway).
             if (d.Flight != FlightStatus.Landed || !d.LandedTile.HasValue || !World.Map.IsChargeTile(d.LandedTile.Value))
                 throw new SimInvariantException("Charging while not landed on a charge tile.");
 
@@ -279,7 +276,6 @@ namespace SimCore.Engine
             }
         }
 
-        /// <summary>Drains battery for 'fraction' of a tick of airborne time. Triggers forced landing at 0.</summary>
         private void DrainBattery(double dt, double fraction)
         {
             var d = World.Drone;
@@ -316,9 +312,7 @@ namespace SimCore.Engine
                  ("battery_pct", d.BatteryPct));
         }
 
-        // =====================================================================
-        //  Helpers
-        // =====================================================================
+        // ---------------- helpers ----------------
 
         private void Emit(string type, params (string key, object value)[] data)
         {

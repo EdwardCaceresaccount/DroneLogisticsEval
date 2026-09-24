@@ -119,12 +119,16 @@ namespace SimCore.Tests
         [Test]
         public void Crash_Ends_Episode_As_Failure_Severity_4()
         {
+            // Charger at (16,20) sits directly behind Building (10,20): the route is battery-feasible, so no LBS
+            // rescue fires — only geometry is wrong. A pure D5 crash.
             var crash = new Plan(new[] { Command.LiftOff(), Command.MoveTo(4, 20), Command.MoveTo(16, 20), Command.Land() });
-            var r = MakeRunner(ScriptedPlanner.FromPlans(crash));
+            var r = MakeRunner(ScriptedPlanner.FromPlans(crash),
+                cfg => cfg.Tiles.Add(new TileSpec { X = 16, Y = 20, Type = "ChargingStation" }));
             r.RunEpisode();
 
             Assert.AreEqual(TripClassification.Crash, r.Trips[0].Classification);
             Assert.AreEqual(4, r.Trips[0].SeverityLevel);
+            Assert.IsFalse(r.Trips[0].LowBatteryOccurred, "Route was battery-feasible; LBS must not have fired.");
             Assert.AreEqual(EpisodeStatus.CompletedFailure, r.World.Status);
             Assert.AreEqual("CRASH", r.TerminationReason);
         }

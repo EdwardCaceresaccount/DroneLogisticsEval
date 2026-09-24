@@ -13,11 +13,6 @@ using SimCore.Util;
 
 namespace SimCore.Engine
 {
-    /// <summary>
-    /// Owns one Episode: the Thinking→Execution→Classification loop over trips (spec §8.11),
-    /// D12 plan retries, episode termination (MissionConfig), and all lifecycle events.
-    /// It is the only place that calls a planner. Planners never touch the engine.
-    /// </summary>
     public sealed class EpisodeRunner
     {
         public SimulationEngine Engine { get; }
@@ -33,11 +28,14 @@ namespace SimCore.Engine
         private readonly IObservationCompiler _compiler;
         private readonly PlanValidator _validator;
         private readonly List<TripOutcome> _trips = new();
-        private PlanExecutor _executor;
+        private PlanExecutor _executor;           // the planner's plan
+        private PlanExecutor _recoveryExecutor;   // simulator-injected recovery plan (D15)
+        private PlanExecutor Active => _recoveryExecutor ?? _executor;
         private TripOutcome _current;
         private TripOutcome _lastCompleted;
         private WorldPos _lastPos;
         private double _lastBattery;
+        private int _deliveredAtStart, _loadedAtStart;
 
         public EpisodeRunner(SimulationEngine engine, IPlanner planner, IObservationCompiler compiler,
                              EpisodeConfig episode, EventLog log)
@@ -65,16 +63,15 @@ namespace SimCore.Engine
                 ToolContract = HarnessVersions.ToolContract
             };
             Emit(EpisodeEventTypes.EpisodeStarted, ("run_id", Log.Header.RunId), ("packages_total", World.Packages.Count),
-                 ("max_trips", Scenario.Mission.MaxTrips), ("max_sim_seconds", Scenario.Mission.MaxSimSeconds));
+                 ("max_trips", Scenario.Mission.MaxTrips), ("max_sim_seconds", Scenario.Mission.MaxSimSeconds),
+                 ("auto_recovery_enabled", Scenario.Recovery.AutoRecoveryEnabled));
         }
 
         public bool IsRunning => World.Status == EpisodeStatus.Running;
         public bool IsExecuting => World.Phase == EpisodePhase.Executing;
         public bool CanStartTrip => IsRunning && World.Phase == EpisodePhase.AwaitingThinking;
 
-        // =====================================================================
-        //  Thinking Phase (sim clock paused — nothing here calls Engine.Tick)
-        // =====================================================================
+        // ================================ Thinking Phase ================================
 
         public void StartTrip()
         {
@@ -85,6 +82,7 @@ namespace SimCore.Engine
 
             int tripNumber = World.TripIndex + 1;
             World.Phase = EpisodePhase.Thinking;
+            d.InLowBatteryState = false;
 
             _current = new TripOutcome
             {
@@ -96,12 +94,12 @@ namespace SimCore.Engine
             };
             _lastPos = d.Position;
             _lastBattery = d.BatteryPct;
-            int deliveredAtStart = World.DeliveredCount();
-            int loadedAtStart = d.LoadedPackageIds.Count;
+            _deliveredAtStart = World.DeliveredCount();
+            _loadedAtStart = d.LoadedPackageIds.Count;
 
             Emit(EpisodeEventTypes.TripStarted, ("trip_number", tripNumber), ("start_tile", _current.StartTile.ToString()),
                  ("start_tile_type", _current.StartTileType.ToString()), ("battery_pct", d.BatteryPct),
-                 ("packages_onboard", loadedAtStart), ("packages_delivered_so_far", deliveredAtStart));
+                 ("packages_onboard", _loadedAtStart), ("packages_delivered_so_far", _deliveredAtStart));
             Emit(EpisodeEventTypes.ThinkingStarted, ("trip_number", tripNumber));
 
             Plan plan = null;
@@ -113,7 +111,7 @@ namespace SimCore.Engine
                 var request = new PlanRequest(observation, tripNumber, attempt, errors, _lastCompleted, Episode.Guidance);
 
                 Emit(EpisodeEventTypes.DecisionMoment, ("type", "PLAN_TRIP"), ("trip_number", tripNumber), ("attempt", attempt),
-                     ("observation_mode", observation.Mode.ToString()), ("guidance_tier", Episode.Guidance.ToString()));
+                     ("decider", "planner"), ("observation_mode", observation.Mode.ToString()), ("guidance_tier", Episode.Guidance.ToString()));
 
                 var sw = Stopwatch.StartNew();
                 PlanResponse response;
@@ -151,7 +149,7 @@ namespace SimCore.Engine
             if (plan == null)
             {
                 _current.InvalidPlanner = true;
-                FinishTrip(deliveredAtStart, loadedAtStart);
+                FinishTrip();
                 return;
             }
 
@@ -162,23 +160,18 @@ namespace SimCore.Engine
             Log.Emit(new SimEvent(World.Clock.Ticks, World.Clock.TimeSeconds, EpisodeEventTypes.PlanAccepted, accepted));
 
             _executor = new PlanExecutor(Engine, plan, Log);
-            _deliveredAtStart = deliveredAtStart;
-            _loadedAtStart = loadedAtStart;
+            _recoveryExecutor = null;
             World.Phase = EpisodePhase.Executing;
             Emit(EpisodeEventTypes.ExecutionStarted, ("trip_number", tripNumber));
         }
 
-        private int _deliveredAtStart, _loadedAtStart;
-
-        // =====================================================================
-        //  Execution Phase
-        // =====================================================================
+        // ================================ Execution Phase ================================
 
         public void Tick()
         {
             if (!IsExecuting) throw new SimInvariantException($"Tick: phase is {World.Phase}, not Executing.");
 
-            _executor.Tick();
+            Active.Tick();
 
             var d = World.Drone;
             _current.DistanceTraveled += _lastPos.DistanceTo(d.Position);
@@ -189,18 +182,73 @@ namespace SimCore.Engine
             _lastBattery = d.BatteryPct;
             if (d.Flight == FlightStatus.Flying) _current.LiftedOff = true;
 
-            if (_executor.IsDone)
-            {
-                FinishTrip(_deliveredAtStart, _loadedAtStart);
-                return;
-            }
+            if (Active.IsDone) { FinishTrip(); return; }
 
             if (World.Clock.TimeSeconds >= Scenario.Mission.MaxSimSeconds)
             {
                 _current.TimeLimitExceeded = true;
                 Emit(EpisodeEventTypes.TimeLimitExceeded, ("sim_time", World.Clock.TimeSeconds), ("limit", Scenario.Mission.MaxSimSeconds));
-                FinishTrip(_deliveredAtStart, _loadedAtStart);
+                FinishTrip();
+                return;
             }
+
+            if (_recoveryExecutor == null) CheckLowBattery();
+        }
+
+        /// <summary>D14 detect → D15 act. Runs once per trip: LBS latches until landing.</summary>
+        private void CheckLowBattery()
+        {
+            var d = World.Drone;
+            if (d.Flight != FlightStatus.Flying || d.InLowBatteryState) return;
+
+            var a = LowBatteryMonitor.Assess(Engine);
+            if (!a.IsLowBattery) return;
+
+            d.InLowBatteryState = true;
+            _current.LowBatteryOccurred = true;
+            _current.LbsTriggerTimeSeconds = World.Clock.TimeSeconds;
+            _current.LbsBatteryPct = d.BatteryPct;
+            _current.LbsSegmentTarget = a.SegmentTarget?.ToString();
+
+            double afterLog = double.IsInfinity(a.AfterSegmentRequiredPct) ? -1 : a.AfterSegmentRequiredPct;
+            Emit(LowBatteryEventTypes.LowBattery, ("battery_pct", d.BatteryPct), ("position", d.Position.ToString()),
+                 ("segment_target", a.SegmentTarget?.ToString() ?? ""), ("segment_required_pct", a.SegmentRequiredPct),
+                 ("after_segment_required_pct", afterLog), ("trigger_margin_pct", a.TriggerMarginPct),
+                 ("recovery_tile", a.RecoveryTile?.ToString() ?? ""), ("recovery_required_pct", a.RecoveryRequiredPct));
+
+            bool auto = Scenario.Recovery.AutoRecoveryEnabled;
+            string decider;
+
+            if (auto && a.RecoveryTile.HasValue)
+            {
+                _current.CommandsDispatched = _executor.NextCommandIndex;
+                _current.CommandsRemainingAtAbort = _executor.CommandsRemaining;
+                _executor.Abort("LOW_BATTERY_AUTO_RECOVERY");
+                Engine.AbortActivity("LOW_BATTERY_AUTO_RECOVERY");
+
+                var tile = a.RecoveryTile.Value;
+                var recovery = new Plan(new[] { Command.SetSpeed(SpeedMode.Slow), Command.MoveTo(tile), Command.Land() }, "simulator-recovery");
+                _recoveryExecutor = new PlanExecutor(Engine, recovery, Log, alreadyAirborne: true);
+                _current.EmergencyRecovery = true;
+                _current.RecoveryTargetTile = tile;
+                decider = "simulator_auto_recovery";
+                Emit(LowBatteryEventTypes.RecoveryStarted, ("target_tile", tile.ToString()),
+                     ("target_tile_type", World.Map.TypeAt(tile).ToString()), ("required_pct", a.RecoveryRequiredPct),
+                     ("battery_pct", d.BatteryPct), ("plan", recovery.ToString()));
+            }
+            else if (auto)
+            {
+                decider = "simulator_no_reachable_charger";
+                Emit(LowBatteryEventTypes.LowBatteryUnrecoverable, ("battery_pct", d.BatteryPct), ("position", d.Position.ToString()));
+            }
+            else
+            {
+                decider = "auto_recovery_disabled_plan_continues";
+                Emit(LowBatteryEventTypes.LowBatteryNoAutoRecovery, ("battery_pct", d.BatteryPct), ("position", d.Position.ToString()));
+            }
+
+            Emit(EpisodeEventTypes.DecisionMoment, ("type", "LOW_BATTERY"), ("trip_number", _current.TripNumber),
+                 ("decider", decider), ("battery_pct", d.BatteryPct), ("recovery_tile", a.RecoveryTile?.ToString() ?? ""));
         }
 
         public void RunTripToEnd()
@@ -219,11 +267,9 @@ namespace SimCore.Engine
             }
         }
 
-        // =====================================================================
-        //  Trip end + episode termination
-        // =====================================================================
+        // ================================ Trip end / termination ================================
 
-        private void FinishTrip(int deliveredAtStart, int loadedAtStart)
+        private void FinishTrip()
         {
             var d = World.Drone;
             var t = _current;
@@ -236,8 +282,9 @@ namespace SimCore.Engine
             t.EndTileType = d.LandedTile.HasValue ? World.Map.TypeAt(d.LandedTile.Value) : (TileType?)null;
             t.EndedAtBase = d.Flight == FlightStatus.Landed && d.LandedTile.HasValue && World.Map.IsChargeTile(d.LandedTile.Value)
                             && d.Failure == FailureKind.None;
-            t.PackagesDelivered = World.DeliveredCount() - deliveredAtStart;
-            t.PackagesLoaded = Math.Max(0, d.LoadedPackageIds.Count + t.PackagesDelivered - loadedAtStart);
+            t.PackagesDelivered = World.DeliveredCount() - _deliveredAtStart;
+            t.PackagesLoaded = Math.Max(0, d.LoadedPackageIds.Count + t.PackagesDelivered - _loadedAtStart);
+
             if (_executor != null)
             {
                 t.ExecutorStatus = _executor.Status;
@@ -245,12 +292,15 @@ namespace SimCore.Engine
                 t.CommandsTruncated = _executor.CommandsTruncated;
                 t.HaltErrorCode = _executor.HaltError?.Code;
             }
+            if (_recoveryExecutor != null)
+                t.RecoveryCommandsDispatched = _recoveryExecutor.NextCommandIndex;
 
             TripClassifier.Classify(t);
             _trips.Add(t);
             _lastCompleted = t;
             World.TripIndex++;
             _executor = null;
+            _recoveryExecutor = null;
 
             Log.Emit(new SimEvent(World.Clock.Ticks, World.Clock.TimeSeconds, EpisodeEventTypes.TripEnded, t.ToLogData()));
 
@@ -280,8 +330,6 @@ namespace SimCore.Engine
                  ("trips", World.TripIndex), ("packages_delivered", World.DeliveredCount()), ("packages_total", World.Packages.Count),
                  ("sim_time", World.Clock.TimeSeconds), ("battery_end", World.Drone.BatteryPct));
         }
-
-        // =====================================================================
 
         private static IEnumerable<string> ErrorCodesOf(ValidationResult r)
         { foreach (var e in r.Errors) yield return e.Code; }

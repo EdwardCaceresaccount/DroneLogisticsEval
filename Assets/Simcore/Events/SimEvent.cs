@@ -2,11 +2,6 @@ using System.Collections.Generic;
 
 namespace SimCore.Events
 {
-    /// <summary>
-    /// One recorded fact about the episode, stamped with the sim tick it occurred on.
-    /// Type strings are UPPER_SNAKE constants (see SimEventTypes) so logs are greppable
-    /// and stable across versions. Block 6 adds JSONL export and Decision Moments on top.
-    /// </summary>
     public sealed class SimEvent
     {
         public long Tick { get; }
@@ -41,6 +36,7 @@ namespace SimCore.Events
         public const string WaitCompleted    = "WAIT_COMPLETED";
         public const string ForcedLanding    = "FORCED_LANDING";
         public const string Crash            = "CRASH";
+        public const string ActivityAborted  = "ACTIVITY_ABORTED";   // Block 7: simulator interrupted a flight activity
     }
 
     public interface ISimEventSink
@@ -48,7 +44,6 @@ namespace SimCore.Events
         void Emit(SimEvent e);
     }
 
-    /// <summary>In-memory sink. Good enough for tests and Block 4; Block 6 adds the persistent EventLog.</summary>
     public sealed class ListEventSink : ISimEventSink
     {
         public List<SimEvent> Events { get; } = new();

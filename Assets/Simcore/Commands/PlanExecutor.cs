@@ -8,14 +8,12 @@ namespace SimCore.Commands
     public enum ExecutorStatus
     {
         Running,
-        /// <summary>Every command dispatched, engine idle, no charge pending.</summary>
         PlanComplete,
-        /// <summary>D11: drone landed on a Facility/Charging Station after flying. Trip boundary; remaining commands discarded.</summary>
         LandedAtBase,
-        /// <summary>A command was illegal against the LIVE state at dispatch time (reality diverged from the plan).</summary>
         HaltedOnError,
-        /// <summary>Engine hit a terminal failure (crash / forced landing) mid-plan.</summary>
-        HaltedTerminal
+        HaltedTerminal,
+        /// <summary>Block 7: the simulator cancelled this plan (low-battery auto-recovery).</summary>
+        Aborted
     }
 
     public static class ExecutorEventTypes
@@ -25,15 +23,9 @@ namespace SimCore.Commands
         public const string PlanCompleted          = "PLAN_COMPLETED";
         public const string PlanHaltedTerminal     = "PLAN_HALTED_TERMINAL";
         public const string PlanTruncatedAtLanding = "PLAN_TRUNCATED_AT_LANDING";
+        public const string PlanAborted            = "PLAN_ABORTED";
     }
 
-    /// <summary>
-    /// Feeds one validated Plan into engine primitives, one tick at a time.
-    /// Per tick: dispatch as many commands as the state allows (instantaneous commands chain;
-    /// a blocking command stops dispatch until the engine is idle again), then advance the engine.
-    /// D10 sync rule lives here: LIFT_OFF is not dispatched while a charge is in progress.
-    /// D11 lives here too: LAND on a base tile after flight ends the plan immediately.
-    /// </summary>
     public sealed class PlanExecutor
     {
         public SimulationEngine Engine { get; }
@@ -41,21 +33,32 @@ namespace SimCore.Commands
         public ExecutorStatus Status { get; private set; } = ExecutorStatus.Running;
         public ValidationError HaltError { get; private set; }
         public int NextCommandIndex { get; private set; }
-        public int CommandsTruncated => Status == ExecutorStatus.LandedAtBase ? Plan.Commands.Count - NextCommandIndex : 0;
+        public int CommandsRemaining => Plan.Commands.Count - NextCommandIndex;
+        public int CommandsTruncated => Status == ExecutorStatus.LandedAtBase ? CommandsRemaining : 0;
 
         private readonly PlanValidator _validator;
         private readonly ISimEventSink _events;
         private bool _hasLiftedOff;
 
-        public PlanExecutor(SimulationEngine engine, Plan plan, ISimEventSink events)
+        /// <param name="alreadyAirborne">True for plans injected mid-flight (recovery), so a LAND at a base still ends the trip.</param>
+        public PlanExecutor(SimulationEngine engine, Plan plan, ISimEventSink events, bool alreadyAirborne = false)
         {
             Engine = engine;
             Plan = plan;
             _events = events;
             _validator = new PlanValidator(engine.World, engine.Config);
+            _hasLiftedOff = alreadyAirborne;
         }
 
         public bool IsDone => Status != ExecutorStatus.Running;
+
+        public void Abort(string reason)
+        {
+            if (IsDone) throw new SimInvariantException($"Abort called while {Status}.");
+            Status = ExecutorStatus.Aborted;
+            Emit(ExecutorEventTypes.PlanAborted, ("reason", reason), ("commands_dispatched", NextCommandIndex),
+                 ("commands_remaining", CommandsRemaining));
+        }
 
         public void Tick()
         {
@@ -88,7 +91,7 @@ namespace SimCore.Commands
                 var cmd = Plan.Commands[NextCommandIndex];
 
                 if (cmd.Type == CommandType.LIFT_OFF && Engine.IsCharging)
-                    return; // D10: hold the plan until the charge target is reached
+                    return;
 
                 var live = ProjectedState.FromWorld(Engine.World, Engine.IsCharging);
                 var errs = _validator.CheckCommand(cmd, live, NextCommandIndex);
