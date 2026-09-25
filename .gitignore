@@ -14,3 +14,16 @@
 .vs/
 .vscode/
 crashlytics-build.properties
+.env
+.env.*
+!.env.example
+secrets.json
+appsettings.Local.json
+*.pem
+*.key
+apikeys.txt
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+*.user
