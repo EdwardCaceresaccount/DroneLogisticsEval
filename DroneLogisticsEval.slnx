@@ -1,5 +1,6 @@
 ﻿<Solution>
   <Project Path="SimCore.csproj" />
+  <Project Path="Viz.csproj" />
   <Project Path="Tests.csproj" />
   <Project Path="Assembly-CSharp-Editor.csproj" />
   <Project Path="Assembly-CSharp.csproj" />

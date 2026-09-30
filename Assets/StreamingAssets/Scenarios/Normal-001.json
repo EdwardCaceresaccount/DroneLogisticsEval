@@ -1,0 +1,60 @@
+{
+  "scenario_id": "Normal-001",
+  "scenario_version": "1.0.0",
+  "seed": 7,
+  "tick_seconds": 0.05,
+  "grid_size": 30,
+  "tiles": [
+    { "x": 5,  "y": 5,  "type": "Facility" },
+    { "x": 25, "y": 25, "type": "Facility" },
+    { "x": 15, "y": 8,  "type": "ChargingStation" },
+    { "x": 8,  "y": 22, "type": "ChargingStation" },
+    { "x": 24, "y": 12, "type": "ChargingStation" },
+    { "x": 10, "y": 4,  "type": "House" },
+    { "x": 12, "y": 12, "type": "House" },
+    { "x": 20, "y": 6,  "type": "House" },
+    { "x": 26, "y": 3,  "type": "House" },
+    { "x": 28, "y": 18, "type": "House" },
+    { "x": 18, "y": 27, "type": "House" },
+    { "x": 14, "y": 20, "type": "House" },
+    { "x": 6,  "y": 28, "type": "House" },
+    { "x": 9,  "y": 9,  "type": "Building" },
+    { "x": 9,  "y": 10, "type": "Building" },
+    { "x": 10, "y": 9,  "type": "Building" },
+    { "x": 10, "y": 10, "type": "Building" },
+    { "x": 17, "y": 17, "type": "Building" },
+    { "x": 17, "y": 18, "type": "Building" },
+    { "x": 17, "y": 19, "type": "Building" },
+    { "x": 17, "y": 20, "type": "Building" },
+    { "x": 17, "y": 21, "type": "Building" },
+    { "x": 17, "y": 22, "type": "Building" },
+    { "x": 17, "y": 23, "type": "Building" },
+    { "x": 20, "y": 10, "type": "Building" },
+    { "x": 21, "y": 10, "type": "Building" },
+    { "x": 22, "y": 10, "type": "Building" },
+    { "x": 23, "y": 10, "type": "Building" }
+  ],
+  "drone": {
+    "start_facility": { "x": 5, "y": 5 },
+    "starting_battery_pct": 100.0
+  },
+  "packages": [
+    { "id": "P001", "origin": { "x": 5,  "y": 5  }, "destination": { "x": 10, "y": 4  }, "difficulty": "Easy" },
+    { "id": "P002", "origin": { "x": 5,  "y": 5  }, "destination": { "x": 12, "y": 12 }, "difficulty": "Easy" },
+    { "id": "P003", "origin": { "x": 5,  "y": 5  }, "destination": { "x": 20, "y": 6  }, "difficulty": "Normal" },
+    { "id": "P004", "origin": { "x": 5,  "y": 5  }, "destination": { "x": 26, "y": 3  }, "difficulty": "Hard" },
+    { "id": "P005", "origin": { "x": 25, "y": 25 }, "destination": { "x": 28, "y": 18 }, "difficulty": "Easy" },
+    { "id": "P006", "origin": { "x": 25, "y": 25 }, "destination": { "x": 18, "y": 27 }, "difficulty": "Easy" },
+    { "id": "P007", "origin": { "x": 25, "y": 25 }, "destination": { "x": 14, "y": 20 }, "difficulty": "Normal" },
+    { "id": "P008", "origin": { "x": 25, "y": 25 }, "destination": { "x": 6,  "y": 28 }, "difficulty": "Normal" }
+  ],
+  "mission": {
+    "require_all_packages_delivered": true,
+    "max_trips": 16,
+    "max_sim_seconds": 700.0
+  },
+  "recovery": {
+    "auto_recovery_enabled": true,
+    "lbs_safety_margin_pct": 5.0
+  }
+}
